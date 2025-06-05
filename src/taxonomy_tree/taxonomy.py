@@ -172,8 +172,6 @@ class Taxonomy:
             print(f"Loaded {len(assemblies_df)} assemblies")
 
             # Optionally load prokaryotic taxonomy from the Genome Taxonomy Database (GTDB)
-            # This overwrites the taxonomy for prokaryotes in the assemblies table when they are in GTDB and links them
-            # to the GTDB taxonomy.
             if add_gtdb_taxonomy:
                 self._add_gtdb_taxonomy(db, tmpdirname)
 
