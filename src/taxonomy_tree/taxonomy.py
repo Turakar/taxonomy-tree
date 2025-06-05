@@ -201,6 +201,7 @@ class Taxonomy:
         versioning scheme defined at https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme. The version
         can be found at the RELEASE_NOTES.txt of the GTDB release, e.g. at
         https://data.ace.uq.edu.au/public/gtdb/data/releases/release226/226.0/RELEASE_NOTES.txt.
+        :param db_prefix: The prefix to use for the GTDB taxids in the database, by default "gtdb".
         :return:
         """
         # check version
