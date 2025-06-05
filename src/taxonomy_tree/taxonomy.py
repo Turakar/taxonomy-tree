@@ -1,3 +1,4 @@
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ class Taxonomy:
         self.db_path = Path(db_path)
         self._db_: duckdb.DuckDBPyConnection | None = None
 
-    def create_db(self) -> None:
+    def create_db(self, add_gtdb_taxonomy: bool = False) -> None:
         print("Creating taxonomy database")
         # Create a temporary directory to store the downloaded files
         with (
@@ -170,7 +171,225 @@ class Taxonomy:
             db.execute("CREATE INDEX idx_assemblies_accession ON assemblies (assembly_accession)")
             print(f"Loaded {len(assemblies_df)} assemblies")
 
+            # Optionally load prokaryotic taxonomy from the Genome Taxonomy Database (GTDB)
+            # This overwrites the taxonomy for prokaryotes in the assemblies table when they are in GTDB and links them
+            # to the GTDB taxonomy.
+            if add_gtdb_taxonomy:
+                self._add_gtdb_taxonomy(db, tmpdirname)
+
             print("Done")
+
+    def _add_gtdb_taxonomy(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        tmpdirname: str,
+        gtdb_release: str = "R10-RS226",
+        db_prefix: str = "gtdb",
+    ) -> None:
+        """Add taxonomy for prokaryotes from the Genome Taxonomy Database (GTDB).
+        GTDB taxonomy is based on genome trees inferred using FastTree from an aligned concatenated set of 120 single
+        copy marker proteins for Bacteria, and with IQ-TREE from a concatenated set of 53 marker proteins for Archaea.
+
+        Assembly accessions in GTDB are prefixed with "GB_GCA_" for GenBank and "RS_GCF_" for RefSeq. We keep this
+        naming scheme to make them distinct from the NCBI assembly accessions in the assemblies table.
+
+        The GTDB taxonomy is added to the nodes and names tables, using a prefix of "gtdb:" for the taxids. Taxids are
+        taxonomic names in GTDB prefixed with a marker for the rank, so they are not numeric like NCBI taxids, e.g.
+        "gtdb:d__Bacteria", "gtdb:c__Aenigmatarchaeia".
+
+        :param db: The DuckDB connection to the database.
+        :param tmpdirname: The temporary directory where the GTDB taxonomy files will be downloaded.
+        :param gtdb_release: The GTDB release to use, e.g. "R10-RS226". Given versions are expected to follow the
+        versioning scheme defined at https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme. The version
+        can be found at the RELEASE_NOTES.txt of the GTDB release, e.g. at
+        https://data.ace.uq.edu.au/public/gtdb/data/releases/release226/226.0/RELEASE_NOTES.txt.
+        :return:
+        """
+        # check version
+        gtdb_version = re.match(r"^R(\d+)-RS(?P<refseq_release>\d+)$", gtdb_release)
+        if gtdb_version is None:
+            raise ValueError(
+                f"GTDB release {gtdb_release} does not match expected versioning scheme defined at "
+                f"https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme."
+            )
+        rs = gtdb_version.group(
+            "refseq_release"
+        )  # the RefSeq release is the relevant version number for the URL
+
+        # create a root node for the GTDB taxonomy and anchor it to the root of the NCBI taxonomy
+        gtdb_root = f"{db_prefix}:root"
+        db.execute(
+            "INSERT INTO nodes (taxid, parent_taxid, rank) VALUES (?, ?, ?)",
+            (gtdb_root, "0", "no rank"),
+        )
+        db.execute(
+            "INSERT INTO names (taxid, scientific_name) VALUES (?, ?)",
+            (gtdb_root, gtdb_root),
+        )
+
+        prefixes = {
+            "Bacteria": "bac120",  # named after the 120 marker proteins for Bacteria
+            "Archaea": "ar53",  # named after the 53 marker proteins for Archaea
+        }
+        for domain in [
+            "Bacteria",
+            "Archaea",
+        ]:  # GTDB provides separate taxonomy files for Bacteria and Archaea
+            # Download the GTDB taxonomy files
+            prefix = prefixes[domain]
+            url = f"https://data.ace.uq.edu.au/public/gtdb/data/releases/release{rs}/{rs}.0/{prefix}_taxonomy_r{rs}.tsv"
+            gtdb_taxonomy_file = Path(tmpdirname) / f"gtdb_{domain}_taxonomy.tsv"
+            subprocess.run(
+                ["curl", "-o", gtdb_taxonomy_file, url],
+                check=True,
+            )
+
+            # Load the GTDB taxonomy
+            print(f"Loading GTDB taxonomy for {domain}")
+            gtdb_df = (
+                pl.scan_csv(
+                    gtdb_taxonomy_file,
+                    separator="\t",
+                    has_header=False,
+                    new_columns=["assembly_id", "lineage"],
+                )
+                .select(
+                    pl.col("assembly_id").cast(pl.Utf8),
+                    pl.col("lineage").cast(pl.Utf8),
+                )
+                .collect()
+            )
+
+            self._gtdb_add_nodes_and_names(
+                domain=domain,
+                gtdb_df=gtdb_df,
+                db_prefix=db_prefix,
+                db=db,
+            )
+
+            self._gtdb_add_assemblies(
+                domain=domain,
+                gtdb_df=gtdb_df,
+                db_prefix=db_prefix,
+                db=db,
+            )
+
+    @staticmethod
+    def _gtdb_add_nodes_and_names(
+        domain: str,
+        gtdb_df: pl.DataFrame,
+        db_prefix: str = "gtdb",
+        db: duckdb.DuckDBPyConnection | None = None,
+    ):
+        # parse lineage to nodes
+        ranks = ["domain", "phylum", "class", "order", "family", "group", "species"]
+        tax_table = (
+            gtdb_df.unique("lineage")
+            .select(
+                pl.col("lineage")
+                .str.split(";")
+                .list.to_struct(n_field_strategy="max_width", fields=ranks)
+                .alias("taxonomy")
+            )
+            .unnest("taxonomy")
+        )
+
+        # iterate by rank, insert unique taxids of this rank and remember inserted at last rank
+        last_rank = "root"
+        parents = ["root"]  # this gets prefixed to be gtdb:root
+        for rank in ranks:
+            new_parents = set()
+            for parent in parents:
+                # select unique taxa having at the given rank having the parent taxid at higher rank
+                if last_rank == "root":
+                    new_taxa = (
+                        tax_table.select(
+                            pl.col(rank).alias("taxid"),
+                        )
+                        .unique()
+                        .select("taxid")
+                    )
+                else:
+                    new_taxa = (
+                        tax_table.select(
+                            pl.col(last_rank),
+                            pl.col(rank).alias("taxid"),
+                        )
+                        .filter(
+                            pl.col(last_rank) == parent,
+                        )
+                        .unique()
+                        .select("taxid")
+                    )
+
+                # prepare update dataframes
+                prefixed_taxid = (
+                    pl.concat_str(
+                        [
+                            pl.lit(f"{db_prefix}:"),
+                            pl.col("taxid"),
+                        ]
+                    ).alias("taxid"),
+                )
+
+                nodes_table_update = new_taxa.select(  # noqa: F841
+                    *prefixed_taxid,
+                    pl.concat_str(
+                        [
+                            pl.lit(f"{db_prefix}:"),
+                            pl.lit(parent),
+                        ]
+                    ).alias("parent_taxid"),
+                    pl.lit(rank).alias("rank"),
+                )
+                names_table_update = new_taxa.select(  # noqa: F841
+                    *prefixed_taxid,
+                    pl.col("taxid").str.slice(3).alias("scientific_name"),
+                )
+                # update database with new taxa
+                db.execute(
+                    "INSERT INTO nodes (taxid, parent_taxid, rank) SELECT * FROM nodes_table_update"
+                )
+                db.execute(
+                    "INSERT INTO names (taxid, scientific_name) SELECT * FROM names_table_update"
+                )
+                # update parents to be used when looking at the next lower rank
+                update = new_taxa.select(
+                    pl.col("taxid"),
+                )
+                new_parents.update(update["taxid"].to_list())
+
+            parents = list(new_parents)
+            last_rank = rank
+
+        print(f"Loaded taxonomic tree nodes from {len(gtdb_df)} {domain} entries")
+
+    @staticmethod
+    def _gtdb_add_assemblies(
+        domain: str,
+        gtdb_df: pl.DataFrame,
+        db_prefix: str = "gtdb",
+        db: duckdb.DuckDBPyConnection | None = None,
+    ):
+        print(f"Add assemblies from GTDB for domain {domain}")
+
+        assemblies_with_taxa = gtdb_df.select(  # noqa: F841
+            pl.col("assembly_id"),
+            pl.concat_str(
+                [
+                    pl.lit(f"{db_prefix}:"),
+                    pl.col("lineage").str.split(";").list.last(),
+                ]
+            ).alias("species"),
+        )
+        # add assemblies in GTDB to the assemblies table
+        # GTDB assembly accessions are prefixed (with RS_ or GB_ depending on source (RefSeq/GenBank)) NCBI assembly
+        # accessions, so they are distinct from the NCBI assembly accessions already in the table
+        db.execute(
+            "INSERT INTO assemblies (assembly_accession, taxid) SELECT * FROM assemblies_with_taxa"
+        )
+
+        print(f"Loaded assemblies for {domain} with {len(gtdb_df)} entries")
 
     @property
     def _db(self) -> duckdb.DuckDBPyConnection:
@@ -195,7 +414,11 @@ class Taxonomy:
     def get_identifier_type(self, identifier: str) -> str:
         if identifier.isdigit():
             return "taxid"
+        if identifier.startswith("gtdb:"):  # GTDB identifiers are prefixed with "gtdb:"
+            return "taxid"
         if identifier.startswith("GCA_") or identifier.startswith("GCF_"):
+            return "assembly_accession"
+        if identifier.startswith("GB_GCA_") or identifier.startswith("RS_GCF_"):  # GTDB prefixes
             return "assembly_accession"
         raise ValueError(f"Identifier {identifier} is not a valid taxid or assembly accession.")
 
