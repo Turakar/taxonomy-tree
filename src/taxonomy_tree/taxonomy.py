@@ -1,3 +1,4 @@
+import itertools
 import re
 import subprocess
 import tempfile
@@ -227,6 +228,11 @@ class Taxonomy:
             (gtdb_root, gtdb_root),
         )
 
+        # set name of GTDB root node
+        db.execute(
+            f"INSERT INTO names (taxid, scientific_name) VALUES ('{db_prefix}:root', '{db_prefix}:root')"
+        )
+
         prefixes = {
             "Bacteria": "bac120",  # named after the 120 marker proteins for Bacteria
             "Archaea": "ar53",  # named after the 53 marker proteins for Archaea
@@ -294,73 +300,49 @@ class Taxonomy:
             .unnest("taxonomy")
         )
 
-        # iterate by rank, insert unique taxids of this rank and remember inserted at last rank
-        last_rank = "root"
-        parents = ["root"]  # this gets prefixed to be gtdb:root
-        for rank in ranks:
-            new_parents = set()
-            for parent in parents:
-                # select unique taxa having at the given rank having the parent taxid at higher rank
-                if last_rank == "root":
-                    new_taxa = (
-                        tax_table.select(
-                            pl.col(rank).alias("taxid"),
-                        )
-                        .unique()
-                        .select("taxid")
-                    )
-                else:
-                    new_taxa = (
-                        tax_table.select(
-                            pl.col(last_rank),
-                            pl.col(rank).alias("taxid"),
-                        )
-                        .filter(
-                            pl.col(last_rank) == parent,
-                        )
-                        .unique()
-                        .select("taxid")
-                    )
-
-                # prepare update dataframes
-                prefixed_taxid = (
+        # update nodes table
+        for parent_rank, rank in itertools.pairwise(["root", *ranks]):
+            nodes_table_update = (  # noqa: F841
+                tax_table.select(  # insert root column and map everything to root
+                    pl.lit("root").alias("root"), pl.col("*")
+                )
+                .select(
                     pl.concat_str(
                         [
                             pl.lit(f"{db_prefix}:"),
-                            pl.col("taxid"),
+                            pl.col(rank),
                         ]
                     ).alias("taxid"),
-                )
-
-                nodes_table_update = new_taxa.select(  # noqa: F841
-                    *prefixed_taxid,
                     pl.concat_str(
                         [
                             pl.lit(f"{db_prefix}:"),
-                            pl.lit(parent),
+                            pl.col(parent_rank),
                         ]
                     ).alias("parent_taxid"),
                     pl.lit(rank).alias("rank"),
                 )
-                names_table_update = new_taxa.select(  # noqa: F841
-                    *prefixed_taxid,
-                    pl.col("taxid").str.slice(3).alias("scientific_name"),
-                )
-                # update database with new taxa
-                db.execute(
-                    "INSERT INTO nodes (taxid, parent_taxid, rank) SELECT * FROM nodes_table_update"
-                )
-                db.execute(
-                    "INSERT INTO names (taxid, scientific_name) SELECT * FROM names_table_update"
-                )
-                # update parents to be used when looking at the next lower rank
-                update = new_taxa.select(
-                    pl.col("taxid"),
-                )
-                new_parents.update(update["taxid"].to_list())
+                .unique()
+            )
 
-            parents = list(new_parents)
-            last_rank = rank
+            db.execute(
+                "INSERT INTO nodes (taxid, parent_taxid, rank) SELECT * FROM nodes_table_update"
+            )
+
+        # update names table
+        names_table_update = (  # noqa: F841
+            tax_table.unpivot()
+            .select(
+                pl.concat_str(
+                    [
+                        pl.lit(f"{db_prefix}:"),
+                        pl.col("value"),
+                    ]
+                ).alias("taxid"),
+                pl.col("value").str.slice(3).alias("scientific_name"),
+            )
+            .unique()
+        )
+        db.execute("INSERT INTO names (taxid, scientific_name) SELECT * FROM names_table_update")
 
         print(f"Loaded taxonomic tree nodes from {len(gtdb_df)} {domain} entries")
 
