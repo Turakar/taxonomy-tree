@@ -94,6 +94,14 @@ def test_lineage_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     )
 
 
+def test_gtdb_root_linked_to_ncbi_root(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
+    # Check if the GTDB root is linked to the NCBI root
+    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("RS_GCF_000744315.1"))
+    identifiers = [entry.identifier for entry in lineage]
+    assert "gtdb:root" in identifiers, "GTDB root not in lineage."
+    assert "1" in identifiers, "NCBI root not in lineage."
+
+
 def test_children(taxonomy: Taxonomy) -> None:
     children = list(taxonomy.find_children("9604"))
     identifiers = {child.identifier for child in children}
