@@ -45,13 +45,13 @@ def test_scientific_name(taxonomy: Taxonomy) -> None:
 
 
 def test_scientific_name_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("RS_GCF_009898805.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCF_009898805.1")
     assert scientific_name == "Escherichia coli"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GB_GCA_036518755.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCA_036518755.1")
     assert scientific_name == "Palsa-295 sp036518755"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("RS_GCF_959018705.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCF_959018705.1")
     assert scientific_name == "Methanocatella smithii"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GB_GCA_008080825.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCA_008080825.1")
     assert scientific_name == "MGIIb-O2 sp002686525"
 
 
@@ -70,14 +70,14 @@ def test_lineage(taxonomy: Taxonomy) -> None:
 
 
 def test_lineage_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
-    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("RS_GCF_000744315.1", stop_rank="class"))
+    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("GCF_000744315.1", stop_rank="class"))
     assert all(isinstance(entry, TaxonomyEntry) for entry in lineage)
     identifiers = [entry.identifier for entry in lineage]
     assert "gtdb:d__Archaea" not in identifiers, (
         "gtdb:d__Archaea in lineage although beyond stop rank."
     )
     expected = [
-        "RS_GCF_000744315.1",
+        "GCF_000744315.1",
         "gtdb:s__Methanosarcina mazei",
         "gtdb:g__Methanosarcina",
         "gtdb:f__Methanosarcinaceae",
@@ -96,7 +96,7 @@ def test_lineage_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
 
 def test_gtdb_root_linked_to_ncbi_root(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     # Check if the GTDB root is linked to the NCBI root
-    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("RS_GCF_000744315.1"))
+    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("GCF_000744315.1"))
     identifiers = [entry.identifier for entry in lineage]
     assert "gtdb:root" in identifiers, "GTDB root not in lineage."
     assert "1" in identifiers, "NCBI root not in lineage."
@@ -112,8 +112,8 @@ def test_children(taxonomy: Taxonomy) -> None:
 def test_children_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     children = list(taxonomy_ncbi_and_gtdb.find_children("gtdb:o__Acidiferrobacterales"))
     identifiers = {child.identifier for child in children}
-    assert "GB_GCA_035292245.1" in identifiers, (
-        "GB_GCA_035292245.1 assembly not in children of gtdb:o__Acidiferrobacterales."
+    assert "GCA_035292245.1" in identifiers, (
+        "GCA_035292245.1 assembly not in children of gtdb:o__Acidiferrobacterales."
     )
     assert "gtdb:f__SPGG2" in identifiers, (
         "gtdb:f__SPGG2 taxid not in children of gtdb:o__Acidiferrobacterales."

@@ -374,7 +374,9 @@ class Taxonomy:
         print(f"Add assemblies from GTDB for domain {domain}")
 
         assemblies_with_taxa = gtdb_df.select(  # noqa: F841
-            pl.col("assembly_id"),
+            # GTDB assembly accessions are prefixed (with RS_ or GB_ depending on source (RefSeq/GenBank)) NCBI assembly
+            # accessions. By slicing the first three characters, we get the NCBI assembly accession.
+            pl.col("assembly_id").str.slice(3).alias("assembly_id"),
             pl.concat_str(
                 [
                     pl.lit(f"{db_prefix}:"),
@@ -382,13 +384,15 @@ class Taxonomy:
                 ]
             ).alias("species"),
         )
-        # add assemblies in GTDB to the assemblies table
-        # GTDB assembly accessions are prefixed (with RS_ or GB_ depending on source (RefSeq/GenBank)) NCBI assembly
-        # accessions, so they are distinct from the NCBI assembly accessions already in the table
-        db.execute(
-            "INSERT INTO assemblies (assembly_accession, taxid) SELECT * FROM assemblies_with_taxa"
-        )
 
+        # upsert assemblies in GTDB to the assemblies table
+        # overwrite existing entries with the same assembly accession
+        db.execute("""
+            BEGIN TRANSACTION;
+            DELETE FROM assemblies WHERE assembly_accession IN (SELECT assembly_id FROM assemblies_with_taxa);
+            INSERT INTO assemblies (assembly_accession, taxid) SELECT * FROM assemblies_with_taxa;
+            COMMIT;
+        """)
         print(f"Loaded assemblies for {domain} with {len(gtdb_df)} entries")
 
     @property
@@ -417,8 +421,6 @@ class Taxonomy:
         if identifier.startswith("gtdb:"):  # GTDB identifiers are prefixed with "gtdb:"
             return "taxid"
         if identifier.startswith("GCA_") or identifier.startswith("GCF_"):
-            return "assembly_accession"
-        if identifier.startswith("GB_GCA_") or identifier.startswith("RS_GCF_"):  # GTDB prefixes
             return "assembly_accession"
         raise ValueError(f"Identifier {identifier} is not a valid taxid or assembly accession.")
 
