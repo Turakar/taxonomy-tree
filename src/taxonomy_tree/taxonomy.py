@@ -219,9 +219,21 @@ class Taxonomy:
         # create a root node for the GTDB taxonomy and anchor it to the root of the NCBI taxonomy
         gtdb_root = f"{db_prefix}:root"
         ncbi_tax_root_node = "1"  # NCBI taxonomy defines the root node with taxid 1
+
+        # ensure NCBI root node exists in the nodes table
+        node_1 = db.execute(
+            "SELECT taxid FROM nodes WHERE taxid = ?",
+            (ncbi_tax_root_node,),
+        ).fetchone()
+        if node_1 is None:
+            raise ValueError(
+                f"NCBI root node with taxid {ncbi_tax_root_node} not found in the nodes table. "
+                "Please ensure the NCBI taxonomy has been loaded before adding GTDB taxonomy."
+            )
+
         db.execute(
             "INSERT INTO nodes (taxid, parent_taxid, rank) VALUES (?, ?, ?)",
-            (gtdb_root, ncbi_tax_root_node, "no rank"),
+            (gtdb_root, ncbi_tax_root_node, "cellular root"),
         )
         db.execute(
             "INSERT INTO names (taxid, scientific_name) VALUES (?, ?)",
