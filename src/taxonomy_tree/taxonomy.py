@@ -217,9 +217,10 @@ class Taxonomy:
 
         # create a root node for the GTDB taxonomy and anchor it to the root of the NCBI taxonomy
         gtdb_root = f"{db_prefix}:root"
+        ncbi_tax_root_node = "1"  # NCBI taxonomy defines the root node with taxid 1
         db.execute(
             "INSERT INTO nodes (taxid, parent_taxid, rank) VALUES (?, ?, ?)",
-            (gtdb_root, "0", "no rank"),
+            (gtdb_root, ncbi_tax_root_node, "no rank"),
         )
         db.execute(
             "INSERT INTO names (taxid, scientific_name) VALUES (?, ?)",
