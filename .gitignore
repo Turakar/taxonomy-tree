@@ -11,3 +11,4 @@ wheels/
 
 # Taxonomy db
 taxonomy.db
+taxonomy_ncbi_and_gtdb.db

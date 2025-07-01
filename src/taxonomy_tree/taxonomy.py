@@ -1,3 +1,5 @@
+import itertools
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -29,7 +31,7 @@ class Taxonomy:
         self.db_path = Path(db_path)
         self._db_: duckdb.DuckDBPyConnection | None = None
 
-    def create_db(self) -> None:
+    def create_db(self, add_gtdb_taxonomy: bool = False) -> None:
         print("Creating taxonomy database")
         # Create a temporary directory to store the downloaded files
         with (
@@ -170,7 +172,222 @@ class Taxonomy:
             db.execute("CREATE INDEX idx_assemblies_accession ON assemblies (assembly_accession)")
             print(f"Loaded {len(assemblies_df)} assemblies")
 
+            # Optionally load prokaryotic taxonomy from the Genome Taxonomy Database (GTDB)
+            if add_gtdb_taxonomy:
+                self._add_gtdb_taxonomy(db, tmpdirname)
+
             print("Done")
+
+    def _add_gtdb_taxonomy(
+        self,
+        db: duckdb.DuckDBPyConnection,
+        tmpdirname: str,
+        gtdb_release: str = "R10-RS226",
+        db_prefix: str = "gtdb",
+    ) -> None:
+        """Add taxonomy for prokaryotes from the Genome Taxonomy Database (GTDB).
+        GTDB taxonomy is based on genome trees inferred using FastTree from an aligned concatenated set of 120 single
+        copy marker proteins for Bacteria, and with IQ-TREE from a concatenated set of 53 marker proteins for Archaea.
+
+        Assembly accessions in GTDB are prefixed with "GB_GCA_" for GenBank and "RS_GCF_" for RefSeq. We keep this
+        naming scheme to make them distinct from the NCBI assembly accessions in the assemblies table.
+
+        The GTDB taxonomy is added to the nodes and names tables, using a prefix of "gtdb:" for the taxids. Taxids are
+        taxonomic names in GTDB prefixed with a marker for the rank, so they are not numeric like NCBI taxids, e.g.
+        "gtdb:d__Bacteria", "gtdb:c__Aenigmatarchaeia".
+
+        :param db: The DuckDB connection to the database.
+        :param tmpdirname: The temporary directory where the GTDB taxonomy files will be downloaded.
+        :param gtdb_release: The GTDB release to use, e.g. "R10-RS226". Given versions are expected to follow the
+        versioning scheme defined at https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme. The version
+        can be found at the RELEASE_NOTES.txt of the GTDB release, e.g. at
+        https://data.ace.uq.edu.au/public/gtdb/data/releases/release226/226.0/RELEASE_NOTES.txt.
+        :param db_prefix: The prefix to use for the GTDB taxids in the database, by default "gtdb".
+        :return:
+        """
+        # check version
+        gtdb_version = re.match(r"^R(\d+)-RS(?P<refseq_release>\d+)$", gtdb_release)
+        if gtdb_version is None:
+            raise ValueError(
+                f"GTDB release {gtdb_release} does not match expected versioning scheme defined at "
+                f"https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme."
+            )
+        rs = gtdb_version.group(
+            "refseq_release"
+        )  # the RefSeq release is the relevant version number for the URL
+
+        # create a root node for the GTDB taxonomy and anchor it to the root of the NCBI taxonomy
+        gtdb_root = f"{db_prefix}:root"
+        ncbi_tax_root_node = "1"  # NCBI taxonomy defines the root node with taxid 1
+
+        # ensure NCBI root node exists in the nodes table
+        node_1 = db.execute(
+            "SELECT taxid FROM nodes WHERE taxid = ?",
+            (ncbi_tax_root_node,),
+        ).fetchone()
+        if node_1 is None:
+            raise ValueError(
+                f"NCBI root node with taxid {ncbi_tax_root_node} not found in the nodes table. "
+                "Please ensure the NCBI taxonomy has been loaded before adding GTDB taxonomy."
+            )
+
+        db.execute(
+            "INSERT INTO nodes (taxid, parent_taxid, rank) VALUES (?, ?, ?)",
+            (gtdb_root, ncbi_tax_root_node, "cellular root"),
+        )
+        db.execute(
+            "INSERT INTO names (taxid, scientific_name) VALUES (?, ?)",
+            (gtdb_root, gtdb_root),
+        )
+
+        # set name of GTDB root node
+        db.execute(
+            f"INSERT INTO names (taxid, scientific_name) VALUES ('{db_prefix}:root', '{db_prefix}:root')"
+        )
+
+        prefixes = {
+            "Bacteria": "bac120",  # named after the 120 marker proteins for Bacteria
+            "Archaea": "ar53",  # named after the 53 marker proteins for Archaea
+        }
+        for domain in [
+            "Bacteria",
+            "Archaea",
+        ]:  # GTDB provides separate taxonomy files for Bacteria and Archaea
+            # Download the GTDB taxonomy files
+            prefix = prefixes[domain]
+            url = f"https://data.ace.uq.edu.au/public/gtdb/data/releases/release{rs}/{rs}.0/{prefix}_taxonomy_r{rs}.tsv"
+            gtdb_taxonomy_file = Path(tmpdirname) / f"gtdb_{domain}_taxonomy.tsv"
+            subprocess.run(
+                ["curl", "-o", gtdb_taxonomy_file, url],
+                check=True,
+            )
+
+            # Load the GTDB taxonomy
+            print(f"Loading GTDB taxonomy for {domain}")
+            gtdb_df = (
+                pl.scan_csv(
+                    gtdb_taxonomy_file,
+                    separator="\t",
+                    has_header=False,
+                    new_columns=["assembly_id", "lineage"],
+                )
+                .select(
+                    pl.col("assembly_id").cast(pl.Utf8),
+                    pl.col("lineage").cast(pl.Utf8),
+                )
+                .collect()
+            )
+
+            self._gtdb_add_nodes_and_names(
+                domain=domain,
+                gtdb_df=gtdb_df,
+                db_prefix=db_prefix,
+                db=db,
+            )
+
+            self._gtdb_add_assemblies(
+                domain=domain,
+                gtdb_df=gtdb_df,
+                db_prefix=db_prefix,
+                db=db,
+            )
+
+    @staticmethod
+    def _gtdb_add_nodes_and_names(
+        domain: str,
+        gtdb_df: pl.DataFrame,
+        db_prefix: str = "gtdb",
+        db: duckdb.DuckDBPyConnection | None = None,
+    ):
+        # parse lineage to nodes
+        ranks = ["domain", "phylum", "class", "order", "family", "group", "species"]
+        tax_table = (
+            gtdb_df.unique("lineage")
+            .select(
+                pl.col("lineage")
+                .str.split(";")
+                .list.to_struct(n_field_strategy="max_width", fields=ranks)
+                .alias("taxonomy")
+            )
+            .unnest("taxonomy")
+        )
+
+        # update nodes table
+        for parent_rank, rank in itertools.pairwise(["root", *ranks]):
+            nodes_table_update = (  # noqa: F841
+                tax_table.select(  # insert root column and map everything to root
+                    pl.lit("root").alias("root"), pl.col("*")
+                )
+                .select(
+                    pl.concat_str(
+                        [
+                            pl.lit(f"{db_prefix}:"),
+                            pl.col(rank),
+                        ]
+                    ).alias("taxid"),
+                    pl.concat_str(
+                        [
+                            pl.lit(f"{db_prefix}:"),
+                            pl.col(parent_rank),
+                        ]
+                    ).alias("parent_taxid"),
+                    pl.lit(rank).alias("rank"),
+                )
+                .unique()
+            )
+
+            db.execute(
+                "INSERT INTO nodes (taxid, parent_taxid, rank) SELECT * FROM nodes_table_update"
+            )
+
+        # update names table
+        names_table_update = (  # noqa: F841
+            tax_table.unpivot()
+            .select(
+                pl.concat_str(
+                    [
+                        pl.lit(f"{db_prefix}:"),
+                        pl.col("value"),
+                    ]
+                ).alias("taxid"),
+                pl.col("value").str.slice(3).alias("scientific_name"),
+            )
+            .unique()
+        )
+        db.execute("INSERT INTO names (taxid, scientific_name) SELECT * FROM names_table_update")
+
+        print(f"Loaded taxonomic tree nodes from {len(gtdb_df)} {domain} entries")
+
+    @staticmethod
+    def _gtdb_add_assemblies(
+        domain: str,
+        gtdb_df: pl.DataFrame,
+        db_prefix: str = "gtdb",
+        db: duckdb.DuckDBPyConnection | None = None,
+    ):
+        print(f"Add assemblies from GTDB for domain {domain}")
+
+        assemblies_with_taxa = gtdb_df.select(  # noqa: F841
+            # GTDB assembly accessions are prefixed (with RS_ or GB_ depending on source (RefSeq/GenBank)) NCBI assembly
+            # accessions. By slicing the first three characters, we get the NCBI assembly accession.
+            pl.col("assembly_id").str.slice(3).alias("assembly_id"),
+            pl.concat_str(
+                [
+                    pl.lit(f"{db_prefix}:"),
+                    pl.col("lineage").str.split(";").list.last(),
+                ]
+            ).alias("species"),
+        )
+
+        # upsert assemblies in GTDB to the assemblies table
+        # overwrite existing entries with the same assembly accession
+        db.execute("""
+            BEGIN TRANSACTION;
+            DELETE FROM assemblies WHERE assembly_accession IN (SELECT assembly_id FROM assemblies_with_taxa);
+            INSERT INTO assemblies (assembly_accession, taxid) SELECT * FROM assemblies_with_taxa;
+            COMMIT;
+        """)
+        print(f"Loaded assemblies for {domain} with {len(gtdb_df)} entries")
 
     @property
     def _db(self) -> duckdb.DuckDBPyConnection:
@@ -194,6 +411,8 @@ class Taxonomy:
 
     def get_identifier_type(self, identifier: str) -> str:
         if identifier.isdigit():
+            return "taxid"
+        if identifier.startswith("gtdb:"):  # GTDB identifiers are prefixed with "gtdb:"
             return "taxid"
         if identifier.startswith("GCA_") or identifier.startswith("GCF_"):
             return "assembly_accession"
