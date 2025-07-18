@@ -281,23 +281,23 @@ class Taxonomy:
             self._gtdb_add_nodes_and_names(
                 domain=domain,
                 gtdb_df=gtdb_df,
-                db_prefix=db_prefix,
                 db=db,
+                db_prefix=db_prefix,
             )
 
             self._gtdb_add_assemblies(
                 domain=domain,
                 gtdb_df=gtdb_df,
-                db_prefix=db_prefix,
                 db=db,
+                db_prefix=db_prefix,
             )
 
     @staticmethod
     def _gtdb_add_nodes_and_names(
         domain: str,
         gtdb_df: pl.DataFrame,
+        db: duckdb.DuckDBPyConnection,
         db_prefix: str = "gtdb",
-        db: duckdb.DuckDBPyConnection | None = None,
     ):
         # parse lineage to nodes
         ranks = ["domain", "phylum", "class", "order", "family", "group", "species"]
@@ -362,8 +362,8 @@ class Taxonomy:
     def _gtdb_add_assemblies(
         domain: str,
         gtdb_df: pl.DataFrame,
+        db: duckdb.DuckDBPyConnection,
         db_prefix: str = "gtdb",
-        db: duckdb.DuckDBPyConnection | None = None,
     ):
         print(f"Add assemblies from GTDB for domain {domain}")
 
@@ -504,6 +504,42 @@ class Taxonomy:
         with_names: bool = False,
         skip: set[str] | None = None,
     ) -> Iterator[TaxonomyEntry]:
+        for lineage in self.find_children_with_lineage(
+            identifier=identifier,
+            stop_rank=stop_rank,
+            with_names=with_names,
+            skip=skip,
+        ):
+            if len(lineage) > 1:
+                # Do not yield the lineage of the identifier itself, only the children
+                yield lineage[0]
+
+    def find_children_with_lineage(
+        self,
+        identifier: str,
+        stop_rank: str | None = None,
+        with_names: bool = False,
+        skip: set[str] | None = None,
+    ) -> Iterator[list[TaxonomyEntry]]:
+        for lineage in self._find_children_with_lineage(
+            lineage=[],
+            identifier=identifier,
+            stop_rank=stop_rank,
+            with_names=with_names,
+            skip=skip,
+        ):
+            if len(lineage) > 1:
+                # Do not yield the lineage of the identifier itself, only the children
+                yield lineage
+
+    def _find_children_with_lineage(
+        self,
+        lineage: list[TaxonomyEntry],
+        identifier: str,
+        stop_rank: str | None = None,
+        with_names: bool = False,
+        skip: set[str] | None = None,
+    ) -> Iterator[list[TaxonomyEntry]]:
         if skip is None:
             skip = set()
 
@@ -511,7 +547,27 @@ class Taxonomy:
             # Assemblies do not have children
             return
 
-        # Get children
+        if with_names:
+            name = self.find_scientific_name(identifier)
+        else:
+            name = None
+        rank_fetch = self._db.execute(
+            "SELECT rank FROM nodes WHERE taxid = ?",
+            (identifier,),
+        ).fetchone()
+        if rank_fetch is None:
+            raise ValueError(f"Taxid {identifier} not found in the database.")
+        (rank,) = rank_fetch
+        lineage = [
+            TaxonomyEntry(
+                identifier=identifier,
+                rank=rank,
+                name=name,
+            )
+        ] + lineage
+        yield lineage
+
+        # Get children in tree
         children_fetchall = self._db.execute(
             "SELECT taxid, rank FROM nodes WHERE parent_taxid = ?",
             (identifier,),
@@ -519,27 +575,19 @@ class Taxonomy:
         for child_taxid, child_rank in children_fetchall:
             if child_taxid in skip:
                 continue
-            if with_names:
-                child_name = self.find_scientific_name(child_taxid)
-            else:
-                child_name = None
-            yield TaxonomyEntry(
-                identifier=child_taxid,
-                rank=child_rank,
-                name=child_name,
-            )
             # Stop criteria
             if stop_rank is not None and child_rank == stop_rank:
                 continue
             # Recursively fetch the children
-            child_children = self.find_children(
-                child_taxid,
+            yield from self._find_children_with_lineage(
+                lineage=lineage,
+                identifier=child_taxid,
                 stop_rank=stop_rank,
                 with_names=with_names,
                 skip=skip,
             )
-            for child_child in child_children:
-                yield child_child
+
+        # Get children assemblies
         assemblies_fetchall = self._db.execute(
             "SELECT assembly_accession FROM assemblies WHERE taxid = ?",
             (identifier,),
@@ -547,10 +595,12 @@ class Taxonomy:
         for (assembly_accession,) in assemblies_fetchall:
             if assembly_accession in skip:
                 continue
-            yield TaxonomyEntry(
-                identifier=assembly_accession,
-                rank="assembly",
-            )
+            yield [
+                TaxonomyEntry(
+                    identifier=assembly_accession,
+                    rank="assembly",
+                )
+            ] + lineage
 
     def depth_first_search(
         self, identifier: str, with_names: bool = False

@@ -9,6 +9,7 @@ from taxonomy_tree import Taxonomy, TaxonomyEntry
 HUMAN_ASSEMBLY = "GCA_000001405.29"
 HUMAN_NAME = "Homo sapiens"
 HUMAN_TAXID = "9606"
+HOMINIDAE_TAXID = "9604"
 
 
 @pytest.fixture()
@@ -60,7 +61,7 @@ def test_lineage(taxonomy: Taxonomy) -> None:
     assert all(isinstance(entry, TaxonomyEntry) for entry in lineage)
     identifiers = [entry.identifier for entry in lineage]
     assert "2759" not in identifiers, "Eukaryotes in lineage although beyond stop rank."
-    expected = [HUMAN_ASSEMBLY, "9604", "9443", "40674"]
+    expected = [HUMAN_ASSEMBLY, HOMINIDAE_TAXID, "9443", "40674"]
     index = -1
     for identifier in expected:
         find = identifiers.index(identifier)
@@ -103,10 +104,24 @@ def test_gtdb_root_linked_to_ncbi_root(taxonomy_ncbi_and_gtdb: Taxonomy) -> None
 
 
 def test_children(taxonomy: Taxonomy) -> None:
-    children = list(taxonomy.find_children("9604"))
+    children = list(taxonomy.find_children(HOMINIDAE_TAXID))
     identifiers = {child.identifier for child in children}
-    assert HUMAN_ASSEMBLY in identifiers, "Human assembly not in children of 9604."
-    assert HUMAN_TAXID in identifiers, "Human taxid not in children of 9604."
+    assert HUMAN_ASSEMBLY in identifiers, "Human assembly not in children of Hominidae."
+    assert HUMAN_TAXID in identifiers, "Human taxid not in children of Hominidae."
+    assert HOMINIDAE_TAXID not in identifiers, "Hominidae taxid should not be in its own children."
+
+
+def test_children_with_lineage(taxonomy: Taxonomy) -> None:
+    children = list(taxonomy.find_children_with_lineage(HOMINIDAE_TAXID))
+    identifiers = {lineage[0].identifier for lineage in children}
+    assert HUMAN_ASSEMBLY in identifiers, "Human assembly not in children of Hominidae."
+    assert HUMAN_TAXID in identifiers, "Human taxid not in children of Hominidae."
+    assert HOMINIDAE_TAXID not in identifiers, "Hominidae taxid should not be in its own children."
+    for lineage in children:
+        reference_lineage = list(taxonomy.find_lineage(lineage[0].identifier, stop_rank="family"))
+        assert lineage == reference_lineage, (
+            f"Child lineage {lineage} does not match reference lineage {reference_lineage}."
+        )
 
 
 def test_children_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
