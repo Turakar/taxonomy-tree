@@ -56,6 +56,40 @@ def test_scientific_name_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     assert scientific_name == "MGIIb-O2 sp002686525"
 
 
+def test_search_scientific_name(taxonomy: Taxonomy) -> None:
+    results = list(taxonomy.search_scientific_name("homo sapiens", lower_case=False, regex=False))
+    assert len(results) == 0
+    results = list(taxonomy.search_scientific_name("Homo sapiens", lower_case=False, regex=False))
+    assert len(results) == 1
+    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    results = list(taxonomy.search_scientific_name("homo sapiens", lower_case=True, regex=False))
+    assert len(results) == 1
+    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    results = list(taxonomy.search_scientific_name("homo sap", lower_case=True, regex=False))
+    assert len(results) == 0
+    results = list(
+        taxonomy.search_scientific_name("[Homo]{4} sapiens", lower_case=False, regex=False)
+    )
+    assert len(results) == 0
+
+
+def test_search_scientific_name_regex(taxonomy: Taxonomy) -> None:
+    results = list(taxonomy.search_scientific_name("homo [sapiens]", lower_case=False, regex=True))
+    assert len(results) == 0
+    results = list(
+        taxonomy.search_scientific_name("[Homo]{4} sapiens", lower_case=False, regex=True)
+    )
+    assert len(results) == 1
+    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    results = list(
+        taxonomy.search_scientific_name("homo [SAPIENS]{7}", lower_case=True, regex=True)
+    )
+    assert len(results) == 1
+    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    results = list(taxonomy.search_scientific_name("homo sap", lower_case=True, regex=True))
+    assert len(results) == 0
+
+
 def test_lineage(taxonomy: Taxonomy) -> None:
     lineage = list(taxonomy.find_lineage(HUMAN_ASSEMBLY, stop_rank="class"))
     assert all(isinstance(entry, TaxonomyEntry) for entry in lineage)

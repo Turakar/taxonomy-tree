@@ -442,6 +442,31 @@ class Taxonomy:
             raise ValueError(f"Taxid {identifier} not found in the database.")
         return scientific_name_fetchone[0]
 
+    def search_scientific_name(
+        self, search: str, lower_case: bool = True, regex: bool = False
+    ) -> Iterator[tuple[str, str]]:
+        # Regex translates to DuckDB "SIMILAR TO" operator
+        # https://duckdb.org/docs/stable/sql/functions/pattern_matching.html#similar-to
+        query = "SELECT taxid, scientific_name FROM names WHERE "
+        if lower_case:
+            query += "LOWER(scientific_name)"
+        else:
+            query += "scientific_name"
+        if regex:
+            query += " SIMILAR TO "
+        else:
+            query += " = "
+        if lower_case:
+            query += "LOWER(?)"
+        else:
+            query += "?"
+        result = self._db.execute(
+            query,
+            (search,),
+        )
+        for row in result.fetchall():
+            yield (row[0], row[1])
+
     def find_lineage(
         self,
         identifier: str,
