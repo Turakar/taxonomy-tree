@@ -10,5 +10,9 @@ wheels/
 .venv
 
 # Taxonomy db
-taxonomy.db
+taxonomy_ncbi.db
 taxonomy_ncbi_and_gtdb.db
+
+# Rust
+/target/
+/python/taxonomy_tree/*.so

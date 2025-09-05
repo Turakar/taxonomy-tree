@@ -1,17 +1,13 @@
 import time
 
-from taxonomy_tree import Taxonomy
+from taxonomy_tree.build import make_taxonomy_tree
 
 print("Creating taxonomy database for NCBI...")
-taxonomy = Taxonomy("taxonomy.db")
 prior = time.time()
-taxonomy.create_db()
+make_taxonomy_tree("taxonomy_ncbi.db")
 print(f"NCBI: {time.time() - prior} s")
 
-del taxonomy
-
 print("Creating taxonomy database for NCBI+GTDB...")
-taxonomy = Taxonomy("taxonomy_ncbi_and_gtdb.db")
 prior = time.time()
-taxonomy.create_db(add_gtdb_taxonomy=True)
+make_taxonomy_tree("taxonomy_ncbi_and_gtdb.db", include_gtdb=True)
 print(f"NCBI+GTDB: {time.time() - prior} s")

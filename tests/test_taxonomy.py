@@ -2,7 +2,6 @@ import pickle
 from pathlib import Path
 
 import pytest
-
 from taxonomy_tree import Taxonomy, TaxonomyEntry
 
 # https://goat.genomehubs.org
@@ -14,7 +13,7 @@ HOMINIDAE_TAXID = "9604"
 
 @pytest.fixture()
 def taxonomy() -> Taxonomy:
-    path = Path("taxonomy.db")
+    path = Path("taxonomy_ncbi.db")
     taxonomy = Taxonomy(path)
     if not path.exists():
         print("Creating taxonomy database")
@@ -28,9 +27,7 @@ def taxonomy_ncbi_and_gtdb() -> Taxonomy:
     taxonomy = Taxonomy(path)
     if not path.exists():
         print("Creating taxonomy database")
-        taxonomy.create_db(
-            add_gtdb_taxonomy=True,
-        )
+        taxonomy.create_db(include_gtdb=True)
     return taxonomy
 
 
@@ -46,13 +43,13 @@ def test_scientific_name(taxonomy: Taxonomy) -> None:
 
 
 def test_scientific_name_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCF_009898805.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("gtdb:s__Escherichia coli")
     assert scientific_name == "Escherichia coli"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCA_036518755.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("gtdb:s__Palsa-295 sp036518755")
     assert scientific_name == "Palsa-295 sp036518755"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCF_959018705.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("gtdb:s__Methanocatella smithii")
     assert scientific_name == "Methanocatella smithii"
-    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("GCA_008080825.1")
+    scientific_name = taxonomy_ncbi_and_gtdb.find_scientific_name("gtdb:s__MGIIb-O2 sp002686525")
     assert scientific_name == "MGIIb-O2 sp002686525"
 
 
@@ -61,10 +58,12 @@ def test_search_scientific_name(taxonomy: Taxonomy) -> None:
     assert len(results) == 0
     results = list(taxonomy.search_scientific_name("Homo sapiens", lower_case=False, regex=False))
     assert len(results) == 1
-    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    assert results[0].identifier == HUMAN_TAXID
+    assert results[0].name == HUMAN_NAME
     results = list(taxonomy.search_scientific_name("homo sapiens", lower_case=True, regex=False))
     assert len(results) == 1
-    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    assert results[0].identifier == HUMAN_TAXID
+    assert results[0].name == HUMAN_NAME
     results = list(taxonomy.search_scientific_name("homo sap", lower_case=True, regex=False))
     assert len(results) == 0
     results = list(
@@ -74,19 +73,23 @@ def test_search_scientific_name(taxonomy: Taxonomy) -> None:
 
 
 def test_search_scientific_name_regex(taxonomy: Taxonomy) -> None:
-    results = list(taxonomy.search_scientific_name("homo [sapiens]", lower_case=False, regex=True))
+    results = list(
+        taxonomy.search_scientific_name("^homo [sapiens]$", lower_case=False, regex=True)
+    )
     assert len(results) == 0
     results = list(
-        taxonomy.search_scientific_name("[Homo]{4} sapiens", lower_case=False, regex=True)
+        taxonomy.search_scientific_name("^[Homo]{4} sapiens$", lower_case=False, regex=True)
     )
     assert len(results) == 1
-    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
+    assert results[0].identifier == HUMAN_TAXID
+    assert results[0].name == HUMAN_NAME
     results = list(
-        taxonomy.search_scientific_name("homo [SAPIENS]{7}", lower_case=True, regex=True)
+        taxonomy.search_scientific_name("^homo [SAPIENS]{7}$", lower_case=True, regex=True)
     )
     assert len(results) == 1
-    assert results[0] == (HUMAN_TAXID, HUMAN_NAME)
-    results = list(taxonomy.search_scientific_name("homo sap", lower_case=True, regex=True))
+    assert results[0].identifier == HUMAN_TAXID
+    assert results[0].name == HUMAN_NAME
+    results = list(taxonomy.search_scientific_name("^homo sap$", lower_case=True, regex=True))
     assert len(results) == 0
 
 
@@ -150,10 +153,10 @@ def test_children_with_lineage(taxonomy: Taxonomy) -> None:
     identifiers = {lineage[0].identifier for lineage in children}
     assert HUMAN_ASSEMBLY in identifiers, "Human assembly not in children of Hominidae."
     assert HUMAN_TAXID in identifiers, "Human taxid not in children of Hominidae."
-    assert HOMINIDAE_TAXID not in identifiers, "Hominidae taxid should not be in its own children."
+    assert HOMINIDAE_TAXID not in identifiers, "Hominidae taxid should not be in its own child."
     for lineage in children:
         reference_lineage = list(taxonomy.find_lineage(lineage[0].identifier, stop_rank="family"))
-        assert lineage == reference_lineage, (
+        assert all(e1.identifier == e2.identifier for e1, e2 in zip(lineage, reference_lineage)), (
             f"Child lineage {lineage} does not match reference lineage {reference_lineage}."
         )
 

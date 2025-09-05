@@ -1,24 +1,28 @@
 [project]
 name = "taxonomy-tree"
-version = "0.1.0"
+version = "0.2.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "duckdb>=1.2.2",
     "polars>=1.29.0",
     "pyarrow>=20.0.0",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
     "pre-commit>=3.8.0",
     "pytest>=8.3.5",
 ]
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+# "extension-module" tells pyo3 we want to build an extension module (skips linking against libpython.so)
+features = ["pyo3/extension-module"]
+python-source = "python"
 
 [tool.ruff]
 line-length = 100
@@ -28,4 +32,7 @@ extend-include = ["*.ipynb"]
 extend-select = ["I"]
 
 [tool.pyright]
-include = ["src/taxonomy_tree"]
+include = ["python/taxonomy_tree", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

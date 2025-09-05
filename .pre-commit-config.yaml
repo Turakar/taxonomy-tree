@@ -16,3 +16,28 @@ repos:
     hooks:
       - id: check-yaml
       - id: check-toml
+  - repo: local
+    hooks:
+      - id: cargo-fmt  # rustup component add rustfmt
+        name: cargo fmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-check
+        name: cargo check
+        entry: cargo check --all-features --all-targets --
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+      - id: cargo-clippy  # rustup component add clippy
+        name: cargo clippy
+        entry: cargo clippy --tests --all-features -- -D warnings
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+ci:
+  skip: [cargo-fmt, cargo-check, cargo-clippy]

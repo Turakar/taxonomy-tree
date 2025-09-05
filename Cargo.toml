@@ -1,0 +1,18 @@
+[package]
+name = "taxonomy-tree"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "taxonomy_tree"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = { version = "1.0.98", features = ["backtrace"] }
+memmap2 = "0.9.8"
+regex = "1.11.2"
+rkyv = { version = "0.8.10", features = ["pointer_width_64"] }
+
+[dependencies.pyo3]
+version = "0.26.0"
+features = ["extension-module", "generate-import-lib"]
