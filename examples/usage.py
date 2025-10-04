@@ -13,10 +13,8 @@ def main():
     taxonomy = pickle.loads(pickle.dumps(taxonomy))
 
     print(f"GCA_000001405.29: {taxonomy.find_scientific_name('GCA_000001405.29')}")
-    print(
-        f"and its lineage: {list(taxonomy.find_lineage('GCA_000001405.29', with_names=True, stop_rank='class'))}"
-    )
-    print(f"Children of 4897: {list(taxonomy.find_children('4897', with_names=True))}")
+    print(f"and its lineage: {list(taxonomy.find_lineage('GCA_000001405.29', stop_rank='class'))}")
+    print(f"Children of 4897: {list(taxonomy.find_children('4897'))}")
     children_314146 = list(taxonomy.find_children("314146", stop_rank="species"))
     print("10090 child of 314146:", "10090" in {c.identifier for c in children_314146})
     print(
