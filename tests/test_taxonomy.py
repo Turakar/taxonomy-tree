@@ -176,3 +176,17 @@ def test_nearest_neighbor(taxonomy: Taxonomy) -> None:
     neighbor = taxonomy.find_nearest_neighbor(HUMAN_TAXID, {"4897", "10090"})
     assert neighbor is not None, "No nearest neighbor found."
     assert neighbor == "10090", "Nearest neighbor not 10090."
+
+
+def test_group_by_rank(taxonomy: Taxonomy) -> None:
+    expected_mapping = {
+        HUMAN_TAXID: [HUMAN_ASSEMBLY, HUMAN_TAXID, "GCA_015150295.1"],
+        "9593": ["9593", "GCA_000167515.2"],
+        None: ["9604"],
+    }
+    all_keys = list(set(expected_mapping.keys()).union(*expected_mapping.values()))
+    all_keys.remove(None)
+    computed_mapping = taxonomy.group_by_rank(all_keys, rank="species")
+    assert set(computed_mapping.keys()) == set(expected_mapping.keys())
+    for key in expected_mapping:
+        assert set(computed_mapping[key]) == set(expected_mapping[key])

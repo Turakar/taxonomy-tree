@@ -1,3 +1,4 @@
+import collections
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -99,6 +100,17 @@ class Taxonomy:
             if entry.identifier in targets:
                 return entry.identifier
         return None
+
+    def group_by_rank(self, identifiers: list[str], rank: str) -> dict[str | None, list[str]]:
+        rank_map = collections.defaultdict(list)
+        for identifier in identifiers:
+            for entry in self.find_lineage(identifier):
+                if entry.rank == rank:
+                    rank_map[entry.identifier].append(identifier)
+                    break
+            else:
+                rank_map[None].append(identifier)
+        return dict(rank_map)
 
 
 if __name__ == "__main__":
