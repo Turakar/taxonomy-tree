@@ -8,13 +8,21 @@ import polars as pl
 
 from . import taxonomy_tree as _rust
 
+DEFAULT_GTDB_RELEASE = "R10-RS226"
 
-def make_taxonomy_tree(output_path: str | Path, include_gtdb: bool = False) -> None:
+
+def make_taxonomy_tree(
+    output_path: str | Path,
+    include_gtdb: bool = False,
+    gtdb_release: str = DEFAULT_GTDB_RELEASE,
+) -> None:
+    if include_gtdb:
+        _gtdb_refseq_release(gtdb_release)  # fail before the NCBI download, not after it
     with tempfile.TemporaryDirectory(prefix="taxonomy-") as tmpdir:
         builder = _rust.TaxonomyTreeBuilder()
         _load_ncbi(tmpdir, builder)
         if include_gtdb:
-            _load_gtdb(tmpdir, builder)
+            _load_gtdb(tmpdir, builder, gtdb_release=gtdb_release)
         print("Finalizing and writing taxonomy tree")
         builder.write(str(output_path))
         print(f"Wrote taxonomy tree to {output_path}")
@@ -166,10 +174,22 @@ def _load_ncbi(tmpdir: str, builder: _rust.TaxonomyTreeBuilder) -> None:
     print(f"Loaded {len(assemblies_df)} assemblies")
 
 
+def _gtdb_refseq_release(gtdb_release: str) -> str:
+    """Check a GTDB release name such as "R10-RS226" and return its RefSeq release ("226"), the version number
+    used in the download URLs."""
+    gtdb_version = re.match(r"^R(\d+)-RS(?P<refseq_release>\d+)$", gtdb_release)
+    if gtdb_version is None:
+        raise ValueError(
+            f"GTDB release {gtdb_release} does not match expected versioning scheme defined at "
+            f"https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme."
+        )
+    return gtdb_version.group("refseq_release")
+
+
 def _load_gtdb(
     tmpdir: str,
     builder: _rust.TaxonomyTreeBuilder,
-    gtdb_release: str = "R10-RS226",
+    gtdb_release: str = DEFAULT_GTDB_RELEASE,
     db_prefix: str = "gtdb",
 ) -> None:
     """Add taxonomy for prokaryotes from the Genome Taxonomy Database (GTDB).
@@ -192,16 +212,7 @@ def _load_gtdb(
     :param db_prefix: The prefix to use for the GTDB taxids in the database, by default "gtdb".
     :return:
     """
-    # check version
-    gtdb_version = re.match(r"^R(\d+)-RS(?P<refseq_release>\d+)$", gtdb_release)
-    if gtdb_version is None:
-        raise ValueError(
-            f"GTDB release {gtdb_release} does not match expected versioning scheme defined at "
-            f"https://gtdb.ecogenomic.org/faq#what-is-the-gtdb-versioning-scheme."
-        )
-    rs = gtdb_version.group(
-        "refseq_release"
-    )  # the RefSeq release is the relevant version number for the URL
+    rs = _gtdb_refseq_release(gtdb_release)
 
     # create a root node for the GTDB taxonomy and anchor it to the root of the NCBI taxonomy
     gtdb_root = f"{db_prefix}:root"

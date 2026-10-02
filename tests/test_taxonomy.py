@@ -190,3 +190,8 @@ def test_group_by_rank(taxonomy: Taxonomy) -> None:
     assert set(computed_mapping.keys()) == set(expected_mapping.keys())
     for key in expected_mapping:
         assert set(computed_mapping[key]) == set(expected_mapping[key])
+
+
+def test_invalid_gtdb_release_fails_before_download(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="R11"):
+        Taxonomy(tmp_path / "taxonomy.db").create_db(include_gtdb=True, gtdb_release="R11")
