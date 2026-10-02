@@ -132,6 +132,17 @@ def test_lineage_gtdb(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     )
 
 
+def test_gtdb_ranks(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
+    lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("GCF_000744315.1"))
+    ranks = {entry.identifier: entry.rank for entry in lineage}
+    assert ranks["gtdb:s__Methanosarcina mazei"] == "species"
+    assert ranks["gtdb:g__Methanosarcina"] == "genus"
+    assert ranks["gtdb:f__Methanosarcinaceae"] == "family"
+    assert ranks["gtdb:d__Archaea"] == "domain"
+    groups = taxonomy_ncbi_and_gtdb.group_by_rank(["GCF_000744315.1"], "genus")
+    assert groups == {"gtdb:g__Methanosarcina": ["GCF_000744315.1"]}
+
+
 def test_gtdb_root_linked_to_ncbi_root(taxonomy_ncbi_and_gtdb: Taxonomy) -> None:
     # Check if the GTDB root is linked to the NCBI root
     lineage = list(taxonomy_ncbi_and_gtdb.find_lineage("GCF_000744315.1"))
