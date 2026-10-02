@@ -272,7 +272,7 @@ def _gtdb_add_internal_nodes(
     db_prefix: str,
 ):
     # Parse lineage to nodes
-    ranks = ["domain", "phylum", "class", "order", "family", "group", "species"]
+    ranks = ["domain", "phylum", "class", "order", "family", "genus", "species"]
     tax_table = (
         gtdb_df.lazy()
         .unique("lineage")
