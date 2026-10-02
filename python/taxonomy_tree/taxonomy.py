@@ -11,10 +11,14 @@ class Taxonomy:
         self.db_path = str(db_path)
         self._db_: _TaxonomyTree | None = None
 
-    def create_db(self, include_gtdb: bool = False) -> None:
-        from .build import make_taxonomy_tree
+    def create_db(self, include_gtdb: bool = False, gtdb_release: str | None = None) -> None:
+        from .build import DEFAULT_GTDB_RELEASE, make_taxonomy_tree
 
-        make_taxonomy_tree(self.db_path, include_gtdb=include_gtdb)
+        make_taxonomy_tree(
+            self.db_path,
+            include_gtdb=include_gtdb,
+            gtdb_release=gtdb_release if gtdb_release is not None else DEFAULT_GTDB_RELEASE,
+        )
 
     @property
     def _db(self) -> _TaxonomyTree:
